@@ -1,0 +1,59 @@
+# Refer to golangci-lint's example config file for more options and information:
+# https://github.com/golangci/golangci-lint/blob/master/.golangci.example.yml
+
+run:
+  timeout: 5m
+  modules-download-mode: mod
+  go: '1.17'
+issues:
+  exclude-files:
+    - ".+_test.go"
+    - ".+_gen.go"
+linters:
+  enable:
+    - gofmt
+    - errcheck
+    - gosimple
+    - govet
+    - staticcheck
+    - typecheck
+    - unused
+    - gosec
+    - revive
+    - goimports
+    - ineffassign
+    - funlen
+  disable:
+    - dupl
+    - godox
+
+linters-settings:
+  goimports:
+    local-prefixes: git.changbaops.com/golang/delay-kafka
+  funlen:
+    lines: 100
+    statements: 50
+    ignore-comments: true
+  staticcheck:
+    checks: [ "all" ]
+  gosec:
+    excludes:
+      - G404 # Insecure random number source (rand)
+  gofmt:
+    # Simplify code: gofmt with `-s` option.
+    # Default: true
+    simplify: true
+    # Apply the rewrite rules to the source before reformatting.
+    # https://pkg.go.dev/cmd/gofmt
+    # Default: []
+    rewrite-rules:
+      - pattern: 'a[b:len(a)]'
+        replacement: 'a[b:]'
+  revive:
+    rules:
+      - name: unused-parameter
+        disabled: true
+      - name: dot-imports
+        severity: warning
+        disabled: false
+        exclude: [ "" ]
