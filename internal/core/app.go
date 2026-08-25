@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,22 +45,27 @@ func NewApp(
 	}
 }
 
-func (a *App) Start() error {
-	go a.consumer.start()
+func (a *App) StartConsumer() error {
+	return a.consumer.start()
+}
+
+func (a *App) StartTask() error {
 	return a.taskServer.start()
 }
 
 type TaskServer struct {
-	logger *zap.Logger
-	server *asynq.Server
-	writer *kafka.Writer
+	logger       *zap.Logger
+	server       *asynq.Server
+	writer       *kafka.Writer
+	done         chan struct{}
+	shutdownOnce sync.Once
 }
 
 func NewTaskServer(
 	cfg *config.Config,
 	logger *zap.Logger,
 	writer *kafka.Writer,
-) (*TaskServer, error) {
+) (*TaskServer, func(), error) {
 	srv := asynq.NewServer(
 		asynq.RedisClientOpt{
 			Addr:         cfg.Redis.Addr,
@@ -77,11 +84,20 @@ func NewTaskServer(
 			Logger:                   logger.Sugar(),
 		},
 	)
-	return &TaskServer{
+	taskServer := &TaskServer{
 		logger: logger,
 		writer: writer,
 		server: srv,
-	}, nil
+		done:   make(chan struct{}),
+	}
+	return taskServer, taskServer.shutdown, nil
+}
+
+func (d *TaskServer) shutdown() {
+	d.shutdownOnce.Do(func() {
+		d.server.Shutdown()
+		close(d.done)
+	})
 }
 
 func (d *TaskServer) start() error {
@@ -108,7 +124,11 @@ func (d *TaskServer) start() error {
 		}
 		return err
 	})
-	return d.server.Run(mux)
+	if err := d.server.Start(mux); err != nil {
+		return err
+	}
+	<-d.done
+	return nil
 }
 
 type TaskMessage struct {
@@ -136,33 +156,36 @@ func (m *TaskMessage) ToKafkaMessageValue() ([]byte, error) {
 }
 
 type Consumer struct {
-	logger *zap.Logger
-	reader *kafka.Reader
-	writer *kafka.Writer
-	client *asynq.Client
+	logger   *zap.Logger
+	reader   *kafka.Reader
+	writer   *kafka.Writer
+	client   *asynq.Client
+	maxDelay time.Duration
 }
 
 func NewConsumer(
+	cfg *config.Config,
 	logger *zap.Logger,
 	reader *kafka.Reader,
 	writer *kafka.Writer,
 	client *asynq.Client,
 ) *Consumer {
 	return &Consumer{
-		logger: logger,
-		reader: reader,
-		writer: writer,
-		client: client,
+		logger:   logger,
+		reader:   reader,
+		writer:   writer,
+		client:   client,
+		maxDelay: cfg.MaxDelay,
 	}
 }
 
-func (c *Consumer) start() {
+func (c *Consumer) start() error {
 	for {
 		ctx := context.Background()
 		m, err := c.reader.ReadMessage(ctx)
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || strings.Contains(err.Error(), "closed") {
+				return err
 			}
 			c.logger.Error("kafka read error", zap.Error(err))
 			continue
@@ -207,8 +230,14 @@ func (c *Consumer) handleMessage(ctx context.Context, m *kafka.Message) error {
 		c.logger.Error("the execution time is not set", zap.Any("msg", msg))
 		return err
 	}
+	if c.maxDelay > 0 && processAt.After(now.Add(c.maxDelay)) {
+		// The requested delay exceeds the configured maximum.
+		err = errors.New("the delay time is more than the max delay")
+		c.logger.Error("the delay time is more than the max delay", zap.Any("msg", msg))
+		return err
+	}
 	if processAt.Before(now.Add(time.Duration(-msg.ToleranceSecond) * time.Second)) {
-		//超出容忍时间
+		// The requested processing time exceeds the tolerated lateness.
 		return nil
 	}
 	if !processAt.After(now) {

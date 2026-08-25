@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -14,13 +16,33 @@ var rootCmd = &cobra.Command{
 	Use:   "delay-kafka",
 	Short: "A kafka delayed message transponder",
 	Long:  `A kafka delayed message transponder`,
-	RunE: func(cmd *cobra.Command, _ []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		app, clean, err := wireApp()
 		if err != nil {
-			panic(err)
+			return fmt.Errorf("initialize application: %w", err)
 		}
-		safeShutdown(clean)
-		return app.Start()
+		signalCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+		defer stop()
+
+		eg, egCtx := errgroup.WithContext(signalCtx)
+		eg.Go(func() error {
+			return app.StartConsumer()
+		})
+		eg.Go(func() error {
+			return app.StartTask()
+		})
+		eg.Go(func() error {
+			<-egCtx.Done()
+			clean()
+			return nil
+		})
+		if err := eg.Wait(); err != nil {
+			if signalCtx.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("run application: %w", err)
+		}
+		return nil
 	},
 }
 
@@ -31,17 +53,4 @@ func Execute() {
 	if err != nil {
 		os.Exit(1)
 	}
-}
-
-func safeShutdown(cleanup func()) {
-	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT)
-	go func() {
-		for {
-			sig := <-ch
-			fmt.Printf("Got %s signal. Aborting...\n", sig)
-			cleanup()
-			os.Exit(1)
-		}
-	}()
 }

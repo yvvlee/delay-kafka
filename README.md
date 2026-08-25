@@ -1,6 +1,6 @@
 # delay-kafka
 
-`delay-kafka` is a delay queue service implemented in Golang using Apache Kafka. It allows you to schedule messages to be delivered at a later time, providing a reliable and scalable solution for delayed message processing.
+`delay-kafka` is a delay queue service implemented in Golang using Apache Kafka. It allows you to schedule messages to be delivered at a later time.
 
 ## Features
 
@@ -11,7 +11,7 @@
 
 ## Requirements
 
-- Golang 1.17 or later
+- Golang 1.24.10 or later
 - Apache Kafka 2.6 or later
 - Redis 4.0 or later
 
@@ -51,9 +51,14 @@ Configuration is done via environment variables. Below are the environment varia
 
 ### Kafka Configuration
 
-- `DELAY_KAFKA_BROKERS`: List of Kafka brokers.
+- `DELAY_KAFKA_BROKERS`: Comma-separated list of Kafka brokers.
 - `DELAY_KAFKA_TOPIC`: Kafka topic to store delayed messages.
 - `DELAY_KAFKA_CONSUMER_GROUP`: Consumer group ID for Kafka.
+- `DELAY_KAFKA_MAX_DELAY`: Maximum allowed delay. Use Go duration format such as `8760h`. The default value is `0`, which disables the limit.
+
+## Delivery Semantics
+
+The Kafka reader commits a consumed message before delayed-message handling completes. The Kafka writer also uses asynchronous writes. A failure after consumption can therefore lose a message. This service does not provide at-least-once or exactly-once delivery guarantees.
 
 ## Usage
 
@@ -71,6 +76,7 @@ export DELAY_KAFKA_REDIS_POOL_SIZE="10"
 export DELAY_KAFKA_BROKERS="localhost:9092"
 export DELAY_KAFKA_TOPIC="delay_topic"
 export DELAY_KAFKA_CONSUMER_GROUP="delay-kafka-group"
+export DELAY_KAFKA_MAX_DELAY="8760h"
 ./delay-kafka
 ```
 - Use any Kafka client to produce a message to the "delay_topic". The message payload should be:
@@ -92,7 +98,7 @@ type DelayMessage struct {
 	Payload string `json:"payload"`
 	// specify when to send your message relative to the current time
 	ProcessIn int32 `json:"processIn"`
-	// specify when to send your message, if ProcessIn is not set
+	// Unix timestamp in seconds for when to send your message, if ProcessIn is not set
 	ProcessAt int64 `json:"processAt"`
 	// ToleranceSecond, default is 0
 	//	- If messageReceivedTime.Before(messageProcessTime)
