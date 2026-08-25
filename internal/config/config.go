@@ -23,6 +23,8 @@ func NewConfig() *Config {
 			Topic:         getEnv("DELAY_KAFKA_TOPIC", ""),
 			ConsumerGroup: getEnv("DELAY_KAFKA_CONSUMER_GROUP", ""),
 		},
+		// Maximum delay. A value of 0 disables the limit. The value uses time.ParseDuration format.
+		MaxDelay: getEnvAsDuration("DELAY_KAFKA_MAX_DELAY", 0),
 	}
 }
 
@@ -50,8 +52,9 @@ func getEnvAsDuration(key string, fallback time.Duration) time.Duration {
 }
 
 type Config struct {
-	Redis *Redis
-	Kafka *kafka
+	Redis    *Redis
+	Kafka    *kafka
+	MaxDelay time.Duration
 }
 
 type Redis struct {

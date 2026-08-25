@@ -20,17 +20,18 @@ func wireApp() (*core.App, func(), error) {
 		return nil, nil, err
 	}
 	writer, cleanup2 := core.NewKafkaWriter(configConfig, logger)
-	taskServer, err := core.NewTaskServer(configConfig, logger, writer)
+	taskServer, cleanup3, err := core.NewTaskServer(configConfig, logger, writer)
 	if err != nil {
 		cleanup2()
 		cleanup()
 		return nil, nil, err
 	}
-	reader, cleanup3 := core.NewKafkaReader(configConfig, logger)
-	client, cleanup4 := core.NewTaskClient(configConfig, logger)
-	consumer := core.NewConsumer(logger, reader, writer, client)
+	reader, cleanup4 := core.NewKafkaReader(configConfig, logger)
+	client, cleanup5 := core.NewTaskClient(configConfig, logger)
+	consumer := core.NewConsumer(configConfig, logger, reader, writer, client)
 	app := core.NewApp(taskServer, consumer)
 	return app, func() {
+		cleanup5()
 		cleanup4()
 		cleanup3()
 		cleanup2()
